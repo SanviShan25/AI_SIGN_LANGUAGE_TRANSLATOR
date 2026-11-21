@@ -1,13 +1,16 @@
 """Evaluate the trained model on the held-out TEST split.
 
     python -m training.evaluate
+    python -m training.evaluate --model models/combined.pt --reports reports/combined
 
 Writes to reports/: metrics.json, classification_report.txt,
 confusion_matrix.png, training_curves.png, worst_confusions.txt
 """
 
+import argparse
 import json
 from collections import Counter
+from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
@@ -20,8 +23,15 @@ from core.model import Predictor
 
 
 def main():
-    split = json.loads((REPORTS_DIR / "split.json").read_text())
-    pred = Predictor(CHECKPOINT_PATH)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", type=Path, default=CHECKPOINT_PATH)
+    ap.add_argument("--reports", type=Path, default=REPORTS_DIR,
+                    help="folder with split.json/history.json from training; outputs go here too")
+    args = ap.parse_args()
+    reports = args.reports
+
+    split = json.loads((reports / "split.json").read_text())
+    pred = Predictor(args.model)
     classes = pred.classes
     c2i = {c: i for i, c in enumerate(classes)}
 
@@ -42,14 +52,14 @@ def main():
         "macro_f1": f1_score(y_true, y_pred, average="macro"),
         "best_val_acc": pred.metrics.get("val_acc"),
     }
-    REPORTS_DIR.mkdir(exist_ok=True)
-    (REPORTS_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2))
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "metrics.json").write_text(json.dumps(metrics, indent=2))
     report = classification_report(y_true, y_pred, labels=range(len(classes)),
                                    target_names=classes, zero_division=0)
-    (REPORTS_DIR / "classification_report.txt").write_text(report)
+    (reports / "classification_report.txt").write_text(report)
 
     pairs = Counter((classes[t], classes[p]) for t, p in zip(y_true, y_pred) if t != p)
-    (REPORTS_DIR / "worst_confusions.txt").write_text(
+    (reports / "worst_confusions.txt").write_text(
         "\n".join(f"{n:3d}  true={a:<15} predicted={b}" for (a, b), n in pairs.most_common(30)))
 
     cm = confusion_matrix(y_true, y_pred, labels=range(len(classes)), normalize="true")
@@ -63,10 +73,10 @@ def main():
     ax.set_ylabel("True")
     ax.set_title(f"Confusion matrix (test top-1 = {metrics['top1_accuracy']:.1%})")
     fig.tight_layout()
-    fig.savefig(REPORTS_DIR / "confusion_matrix.png", dpi=130)
+    fig.savefig(reports / "confusion_matrix.png", dpi=130)
     plt.close(fig)
 
-    hist_path = REPORTS_DIR / "history.json"
+    hist_path = reports / "history.json"
     if hist_path.exists():
         h = json.loads(hist_path.read_text())
         ep = [r["epoch"] for r in h]
@@ -80,12 +90,12 @@ def main():
         a2.set_title("Accuracy")
         a2.legend()
         fig.tight_layout()
-        fig.savefig(REPORTS_DIR / "training_curves.png", dpi=120)
+        fig.savefig(reports / "training_curves.png", dpi=120)
         plt.close(fig)
 
     print(json.dumps(metrics, indent=2))
     print(report)
-    print(f"plots and reports saved in {REPORTS_DIR}")
+    print(f"plots and reports saved in {reports}")
 
 
 if __name__ == "__main__":

@@ -16,3 +16,5 @@ models/mediapipe/
 reports/*.png
 reports/split.json
 *.crdownload
+reports/**/*.png
+reports/**/split.json

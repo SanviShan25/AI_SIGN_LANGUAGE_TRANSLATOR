@@ -2,10 +2,13 @@
 
     python -m training.train_transformer
     python -m training.train_transformer --epochs 80 --min-samples 8
+    # combined model from several folders (same class name in two folders = one class):
+    python -m training.train_transformer --data datasets/landmarks datasets/own_landmarks \
+        --out models/combined.pt --reports reports/combined
 
 Writes
-  models/sign_transformer.pt   best checkpoint (weights + classes + config)
-  reports/split.json           exact train/val/test file lists (test is never trained on)
+  models/sign_transformer.pt   best checkpoint (weights + classes + config)   [--out]
+  reports/split.json           exact train/val/test file lists (test is never trained on)  [--reports]
   reports/history.json         loss/accuracy per epoch
 """
 
@@ -29,16 +32,24 @@ from core.preprocessing import augment_raw, raw_to_features, trim
 
 
 # ------------------------------------------------------------------ data
-def scan_dataset(root: Path, min_samples: int):
+def scan_dataset(roots: Path | list[Path], min_samples: int):
+    """Collect <root>/<class>/*.npy from one or more roots. Class folders with the
+    same name in different roots are merged into one class."""
+    roots = [roots] if isinstance(roots, Path) else list(roots)
+    by_class: dict[str, list[Path]] = {}
+    for root in roots:
+        if not root.is_dir():
+            raise SystemExit(f"Data folder not found: {root}")
+        for cdir in sorted(p for p in root.iterdir() if p.is_dir()):
+            by_class.setdefault(cdir.name, []).extend(sorted(cdir.glob("*.npy")))
     files, labels = [], []
-    for cdir in sorted(p for p in root.iterdir() if p.is_dir()):
-        clips = sorted(cdir.glob("*.npy"))
-        usable = [f for f in clips if len(trim(np.load(f))) >= CFG.features.min_frames]
+    for name in sorted(by_class):
+        usable = [f for f in by_class[name] if len(trim(np.load(f))) >= CFG.features.min_frames]
         if len(usable) < min_samples:
-            print(f"  skip '{cdir.name}': only {len(usable)} usable clips (< {min_samples})")
+            print(f"  skip '{name}': only {len(usable)} usable clips (< {min_samples})")
             continue
         files += [str(f) for f in usable]
-        labels += [cdir.name] * len(usable)
+        labels += [name] * len(usable)
     classes = sorted(set(labels))
     return files, labels, classes
 
@@ -99,8 +110,11 @@ def run_epoch(model, loader, device, criterion, optimizer=None, scheduler=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", type=Path, default=LANDMARK_DIR)
+    ap.add_argument("--data", type=Path, nargs="+", default=[LANDMARK_DIR],
+                    help="one or more folders of <class>/*.npy")
     ap.add_argument("--out", type=Path, default=CHECKPOINT_PATH)
+    ap.add_argument("--reports", type=Path, default=REPORTS_DIR,
+                    help="where split.json / history.json go (use a separate folder per model)")
     ap.add_argument("--epochs", type=int, default=CFG.train.epochs)
     ap.add_argument("--batch-size", type=int, default=CFG.train.batch_size)
     ap.add_argument("--lr", type=float, default=CFG.train.lr)
@@ -112,15 +126,16 @@ def main():
     torch.manual_seed(tc.seed)
     np.random.seed(tc.seed)
 
-    print(f"Scanning {args.data} ...")
+    print("Scanning", ", ".join(map(str, args.data)), "...")
     files, labels, classes = scan_dataset(args.data, args.min_samples)
     if len(classes) < 2:
         raise SystemExit("Need at least 2 classes with enough clips. Extract/record more data first.")
     print(f"{len(files)} clips, {len(classes)} classes")
 
     split = make_split(files, labels, tc.seed)
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORTS_DIR / "split.json").write_text(json.dumps({"classes": classes, **split}, indent=1))
+    reports = args.reports
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "split.json").write_text(json.dumps({"classes": classes, **split}, indent=1))
     c2i = {c: i for i, c in enumerate(classes)}
 
     train_ds = LandmarkDataset(split["train"], c2i, augment=True, seed=tc.seed)
@@ -162,9 +177,12 @@ def main():
             print(f"early stop (no val improvement for {tc.patience} epochs)")
             break
 
-    (REPORTS_DIR / "history.json").write_text(json.dumps(history, indent=1))
+    (reports / "history.json").write_text(json.dumps(history, indent=1))
     print(f"\nbest val acc {best:.3f}  -> {args.out}")
-    print("Next: python -m training.evaluate")
+    nxt = "python -m training.evaluate"
+    if args.out != CHECKPOINT_PATH or args.reports != REPORTS_DIR:
+        nxt += f" --model {args.out} --reports {args.reports}"
+    print("Next:", nxt)
 
 
 if __name__ == "__main__":
