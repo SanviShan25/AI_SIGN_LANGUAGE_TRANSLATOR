@@ -18,6 +18,7 @@ import argparse
 import json
 import math
 import time
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -54,13 +55,45 @@ def scan_dataset(roots: Path | list[Path], min_samples: int):
     return files, labels, classes
 
 
-def make_split(files, labels, seed):
+def load_fixed_splits(files) -> dict[str, str]:
+    """file -> 'train'|'val'|'test' for files whose data root has a splits.json
+    (written by scripts/prepare_asl_citizen.py, keys "<class>/<stem>")."""
+    cache: dict[Path, dict] = {}
+    fixed = {}
+    for f in files:
+        p = Path(f)
+        root = p.parent.parent
+        if root not in cache:
+            sp = root / "splits.json"
+            cache[root] = json.loads(sp.read_text()) if sp.exists() else {}
+        split = cache[root].get(f"{p.parent.name}/{p.stem}")
+        if split is not None:
+            if split not in ("train", "val", "test"):
+                raise ValueError(f"{root / 'splits.json'}: bad split {split!r} for {p}")
+            fixed[f] = split
+    return fixed
+
+
+def make_split(files, labels, seed, fixed: dict[str, str] | None = None):
+    """Stratified random train/val/test split, except files listed in ``fixed`` keep
+    their given split (e.g. ASL Citizen's signer-independent splits). The random part
+    only sees the non-fixed files, so adding a fixed-split dataset leaves the split of
+    the other data exactly as it was."""
     tc = CFG.train
-    f_tr, f_te, y_tr, y_te = train_test_split(files, labels, test_size=tc.test_size,
-                                              stratify=labels, random_state=seed)
-    f_tr, f_va, y_tr, y_va = train_test_split(f_tr, y_tr, test_size=tc.val_size / (1 - tc.test_size),
-                                              stratify=y_tr, random_state=seed)
-    return {"train": list(zip(f_tr, y_tr)), "val": list(zip(f_va, y_va)), "test": list(zip(f_te, y_te))}
+    fixed = fixed or {}
+    out = {"train": [], "val": [], "test": []}
+    free = [(f, y) for f, y in zip(files, labels) if f not in fixed]
+    if free:
+        ff, fy = [f for f, _ in free], [y for _, y in free]
+        f_tr, f_te, y_tr, y_te = train_test_split(ff, fy, test_size=tc.test_size,
+                                                  stratify=fy, random_state=seed)
+        f_tr, f_va, y_tr, y_va = train_test_split(f_tr, y_tr, test_size=tc.val_size / (1 - tc.test_size),
+                                                  stratify=y_tr, random_state=seed)
+        out = {"train": list(zip(f_tr, y_tr)), "val": list(zip(f_va, y_va)), "test": list(zip(f_te, y_te))}
+    for f, y in zip(files, labels):
+        if f in fixed:
+            out[fixed[f]].append((f, y))
+    return out
 
 
 class LandmarkDataset(Dataset):
@@ -132,7 +165,11 @@ def main():
         raise SystemExit("Need at least 2 classes with enough clips. Extract/record more data first.")
     print(f"{len(files)} clips, {len(classes)} classes")
 
-    split = make_split(files, labels, tc.seed)
+    fixed = load_fixed_splits(files)
+    if fixed:
+        print(f"{len(fixed)} clips use a fixed split from splits.json "
+              f"({', '.join(f'{k} {v}' for k, v in sorted(Counter(fixed.values()).items()))})")
+    split = make_split(files, labels, tc.seed, fixed)
     reports = args.reports
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "split.json").write_text(json.dumps({"classes": classes, **split}, indent=1))

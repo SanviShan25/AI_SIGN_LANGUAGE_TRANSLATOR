@@ -10,11 +10,14 @@ Works for WLASL (default) and your own recordings:
 Input layout : <src>/<class_name>/*.mp4|avi|mov
 Output layout: datasets/landmarks/<class_name>/<video_name>.npy
 Already-extracted files are skipped, so you can stop and resume any time.
+If <src>/splits.json exists (fixed train/val/test assignment, e.g. ASL Citizen's
+signer-independent splits) it is copied to <out>/splits.json for training.
 """
 
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -79,6 +82,11 @@ def main():
             dst = args.out / c / (f.stem + ".npy")
             if f.suffix.lower() in VIDEO_EXT and not dst.exists():
                 jobs.append((str(f), str(dst)))
+
+    if (args.src / "splits.json").exists():
+        args.out.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(args.src / "splits.json", args.out / "splits.json")
+        print("copied fixed splits ->", args.out / "splits.json")
 
     print(f"{len(classes)} classes, {len(jobs)} videos to process")
     if not jobs:

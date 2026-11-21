@@ -2,9 +2,13 @@
 
     python -m training.evaluate
     python -m training.evaluate --model models/combined.pt --reports reports/combined
+    # WLASL-only model on the combined test set (WLASL + ASL Citizen test signers):
+    python -m training.evaluate --split reports/combined/split.json --reports reports/wlasl_model_on_combined_test
 
 Writes to reports/: metrics.json, classification_report.txt,
 confusion_matrix.png, training_curves.png, worst_confusions.txt
+metrics.json has overall numbers plus "by_source": one entry per dataset
+(WLASL, ASL Citizen, ...), judged from the data folder each test clip comes from.
 """
 
 import argparse
@@ -18,8 +22,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 
-from core.config import CHECKPOINT_PATH, REPORTS_DIR
+from core.config import CHECKPOINT_PATH, DATASETS_DIR, REPORTS_DIR
 from core.model import Predictor
+
+SOURCE_NAMES = {"landmarks": "WLASL", "asl_citizen_landmarks": "ASL Citizen", "own_landmarks": "own"}
+
+
+def source_of(path: str) -> str:
+    """Dataset a landmark file belongs to: name of its <root>/<class>/<file>.npy root."""
+    root = Path(path).parent.parent
+    name = root.name if root.parent.resolve() == DATASETS_DIR.resolve() else str(root)
+    return SOURCE_NAMES.get(name, name)
+
+
+def scores(y_true, y_pred, top5) -> dict:
+    return {"test_samples": len(y_true),
+            "top1_accuracy": accuracy_score(y_true, y_pred),
+            "top5_accuracy": float(np.mean(top5)),
+            "macro_f1": f1_score(y_true, y_pred, average="macro")}
 
 
 def main():
@@ -27,31 +47,41 @@ def main():
     ap.add_argument("--model", type=Path, default=CHECKPOINT_PATH)
     ap.add_argument("--reports", type=Path, default=REPORTS_DIR,
                     help="folder with split.json/history.json from training; outputs go here too")
+    ap.add_argument("--split", type=Path,
+                    help="split.json whose test set to use (default: <reports>/split.json)")
     args = ap.parse_args()
     reports = args.reports
 
-    split = json.loads((reports / "split.json").read_text())
+    split = json.loads((args.split or reports / "split.json").read_text())
     pred = Predictor(args.model)
     classes = pred.classes
     c2i = {c: i for i, c in enumerate(classes)}
 
-    y_true, y_pred, top5 = [], [], []
+    y_true, y_pred, top5, sources = [], [], [], []
+    unknown = Counter()
     for f, label in split["test"]:
+        if label not in c2i:  # test set from another model with classes this one never saw
+            unknown[label] += 1
+            continue
         p = pred.predict_proba(np.load(f))
         if p is None:
             continue
         y_true.append(c2i[label])
         y_pred.append(int(p.argmax()))
         top5.append(c2i[label] in np.argsort(p)[::-1][:5])
+        sources.append(source_of(f))
 
-    metrics = {
-        "test_samples": len(y_true),
-        "num_classes": len(classes),
-        "top1_accuracy": accuracy_score(y_true, y_pred),
-        "top5_accuracy": float(np.mean(top5)),
-        "macro_f1": f1_score(y_true, y_pred, average="macro"),
-        "best_val_acc": pred.metrics.get("val_acc"),
-    }
+    metrics = {**scores(y_true, y_pred, top5),
+               "num_classes": len(classes),
+               "best_val_acc": pred.metrics.get("val_acc"),
+               "model": str(args.model)}
+    if unknown:
+        metrics["skipped_unknown_class"] = dict(unknown)
+    by_source = {}
+    for s in sorted(set(sources)):
+        idx = [i for i, x in enumerate(sources) if x == s]
+        by_source[s] = scores([y_true[i] for i in idx], [y_pred[i] for i in idx], [top5[i] for i in idx])
+    metrics["by_source"] = by_source
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "metrics.json").write_text(json.dumps(metrics, indent=2))
     report = classification_report(y_true, y_pred, labels=range(len(classes)),
@@ -94,6 +124,10 @@ def main():
         plt.close(fig)
 
     print(json.dumps(metrics, indent=2))
+    print(f"\n{'test set':<14}{'clips':>6}{'top-1':>8}{'top-5':>8}{'macro F1':>10}")
+    for name, m in [*by_source.items(), ("overall", metrics)]:
+        print(f"{name:<14}{m['test_samples']:>6}{m['top1_accuracy']:>8.1%}{m['top5_accuracy']:>8.1%}"
+              f"{m['macro_f1']:>10.3f}")
     print(report)
     print(f"plots and reports saved in {reports}")
 

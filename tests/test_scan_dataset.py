@@ -43,3 +43,30 @@ def test_multiple_folders_merge_same_class(tmp_path):
 def test_missing_folder_is_an_error(tmp_path):
     with pytest.raises(SystemExit):
         scan_dataset([tmp_path / "nope"], min_samples=1)
+
+
+def test_fixed_splits_kept_and_other_split_unchanged(tmp_path):
+    import json
+
+    from training.train_transformer import load_fixed_splits, make_split
+
+    wlasl, aslc = tmp_path / "landmarks", tmp_path / "asl_citizen_landmarks"
+    for c in ("a", "b"):
+        _write(wlasl, c, 10)
+        _write(aslc, c, 3)
+    fixed_map = {f"{c}/{i:03d}": s for c in ("a", "b") for i, s in enumerate(["train", "val", "test"])}
+    (aslc / "splits.json").write_text(json.dumps(fixed_map))
+
+    only_files, only_labels, _ = scan_dataset(wlasl, min_samples=1)
+    base = make_split(only_files, only_labels, seed=42)
+
+    files, labels, _ = scan_dataset([wlasl, aslc], min_samples=1)
+    fixed = load_fixed_splits(files)
+    assert len(fixed) == 6 and all(str(aslc) in f for f in fixed)
+    split = make_split(files, labels, seed=42, fixed=fixed)
+
+    for part in ("train", "val", "test"):
+        wl = [x for x in split[part] if str(wlasl) in x[0]]
+        assert wl == base[part]                       # WLASL split identical to WLASL-only run
+        ac = [x for x in split[part] if str(aslc) in x[0]]
+        assert len(ac) == 2 and all(fixed[f] == part for f, _ in ac)   # official split respected
