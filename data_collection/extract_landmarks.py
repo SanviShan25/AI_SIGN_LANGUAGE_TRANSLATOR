@@ -1,150 +1,110 @@
-import os
-import cv2
-import mediapipe as mp
+"""Videos -> landmark .npy files (T, 147).
+
+Works for WLASL (default) and your own recordings:
+
+    python -m data_collection.extract_landmarks                       # all WLASL classes
+    python -m data_collection.extract_landmarks --classes hello yes no
+    python -m data_collection.extract_landmarks --src datasets/raw_videos
+    python -m data_collection.extract_landmarks --max-classes 20 --workers 4
+
+Input layout : <src>/<class_name>/*.mp4|avi|mov
+Output layout: datasets/landmarks/<class_name>/<video_name>.npy
+Already-extracted files are skipped, so you can stop and resume any time.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
+
 import numpy as np
-from tqdm import tqdm
-from sklearn import
-# =====================================================
-# CONFIGURATION
-# =====================================================
 
-DATASET_ROOT = "datasets/WLASL/dataset/SL"
-OUTPUT_ROOT = "datasets/landmarks"
+from core.config import LANDMARK_DIR, WLASL_DIR
+from core.preprocessing import hands_present
 
-# Start with only 3 classes for testing
-CLASSES = [
-    "write",
-    "yes",
-    "you"
-]
+VIDEO_EXT = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
-# =====================================================
-# CREATE OUTPUT FOLDER
-# =====================================================
+_extractor = None
 
-os.makedirs(OUTPUT_ROOT, exist_ok=True)
 
-# =====================================================
-# MEDIAPIPE HANDS
-# =====================================================
+def _init_worker():
+    global _extractor
+    from core.landmarks import LandmarkExtractor
+    _extractor = LandmarkExtractor()
 
-mp_hands = mp.solutions.hands
 
-hand_detector = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=2,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
+def _process(job: tuple[str, str]) -> tuple[str, str]:
+    from core.landmarks import extract_video
+    src, dst = job
+    try:
+        seq = extract_video(src, _extractor)
+        if len(seq) == 0:
+            return src, "unreadable"
+        if hands_present(seq).sum() < 3:
+            return src, "no hands"
+        np.save(dst, seq)
+        return src, "ok"
+    except Exception as e:
+        return src, f"error: {e}"
 
-print(f"\nFound {len(CLASSES)} classes")
-print("=" * 50)
 
-# =====================================================
-# PROCESS EACH CLASS
-# =====================================================
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--src", type=Path, default=WLASL_DIR)
+    ap.add_argument("--out", type=Path, default=LANDMARK_DIR)
+    ap.add_argument("--classes", nargs="*", help="only these class folders")
+    ap.add_argument("--max-classes", type=int, help="take the N classes with the most videos")
+    ap.add_argument("--workers", type=int, default=1)
+    args = ap.parse_args()
 
-for class_name in CLASSES:
+    if not args.src.exists():
+        sys.exit(f"Source folder not found: {args.src}")
 
-    class_folder = os.path.join(
-        DATASET_ROOT,
-        class_name
-    )
+    classes = args.classes or sorted(p.name for p in args.src.iterdir() if p.is_dir())
+    if args.max_classes:
+        counts = {c: sum(1 for f in (args.src / c).iterdir() if f.suffix.lower() in VIDEO_EXT)
+                  for c in classes if (args.src / c).is_dir()}
+        classes = sorted(counts, key=counts.get, reverse=True)[: args.max_classes]
 
-    if not os.path.exists(class_folder):
-        print(f"\nSkipping: {class_name} (folder not found)")
-        continue
-
-    save_folder = os.path.join(
-        OUTPUT_ROOT,
-        class_name
-    )
-
-    os.makedirs(save_folder, exist_ok=True)
-
-    video_files = [
-        f for f in os.listdir(class_folder)
-        if f.endswith(".mp4")
-    ]
-
-    print(
-        f"\nProcessing '{class_name}' "
-        f"({len(video_files)} videos)"
-    )
-
-    for video_file in tqdm(video_files):
-
-        video_path = os.path.join(
-            class_folder,
-            video_file
-        )
-
-        cap = cv2.VideoCapture(video_path)
-
-        sequence = []
-
-        while cap.isOpened():
-
-            ret, frame = cap.read()
-
-            if not ret:
-                break
-
-            rgb = cv2.cvtColor(
-                frame,
-                cv2.COLOR_BGR2RGB
-            )
-
-            results = hand_detector.process(rgb)
-
-            landmarks = []
-
-            if results.multi_hand_landmarks:
-
-                for hand in results.multi_hand_landmarks:
-
-                    for lm in hand.landmark:
-
-                        landmarks.extend([
-                            lm.x,
-                            lm.y,
-                            lm.z
-                        ])
-
-            # =================================================
-            # FORCE FIXED SIZE
-            # 2 hands × 21 landmarks × 3 coords = 126
-            # =================================================
-
-            while len(landmarks) < 126:
-                landmarks.append(0)
-
-            landmarks = landmarks[:126]
-
-            sequence.append(landmarks)
-
-        cap.release()
-
-        # Skip empty videos
-        if len(sequence) == 0:
+    jobs = []
+    for c in classes:
+        folder = args.src / c
+        if not folder.is_dir():
+            print(f"skip {c}: folder not found")
             continue
+        (args.out / c).mkdir(parents=True, exist_ok=True)
+        for f in sorted(folder.iterdir()):
+            dst = args.out / c / (f.stem + ".npy")
+            if f.suffix.lower() in VIDEO_EXT and not dst.exists():
+                jobs.append((str(f), str(dst)))
 
-        sequence = np.array(
-            sequence,
-            dtype=np.float32
-        )
+    print(f"{len(classes)} classes, {len(jobs)} videos to process")
+    if not jobs:
+        return
 
-        save_path = os.path.join(
-            save_folder,
-            video_file.replace(
-                ".mp4",
-                ".npy"
-            )
-        )
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        def tqdm(x, **_):
+            return x
 
-        np.save(
-            save_path,
-            sequence
-        )
+    stats: dict[str, int] = {}
+    if args.workers > 1:
+        with ProcessPoolExecutor(args.workers, initializer=_init_worker) as pool:
+            results = pool.map(_process, jobs, chunksize=4)
+            for _, status in tqdm(results, total=len(jobs)):
+                stats[status.split(":")[0]] = stats.get(status.split(":")[0], 0) + 1
+    else:
+        _init_worker()
+        for job in tqdm(jobs):
+            _, status = _process(job)
+            stats[status.split(":")[0]] = stats.get(status.split(":")[0], 0) + 1
+            if status.startswith("error"):
+                print(job[0], status)
+    print("done:", stats)
 
-print("\nLandmark Extraction Complete!")
+
+if __name__ == "__main__":
+    main()

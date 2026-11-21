@@ -1,158 +1,85 @@
-# data_collection/collect_data.py
+"""Record your own sign VIDEOS from the webcam (keeps the raw video).
 
-import cv2
-import os
+    python -m data_collection.collect_data --sign hello --num 40
+
+Keys: R = record one clip (after a 1 s countdown), Q = quit.
+Afterwards: python -m data_collection.extract_landmarks --src datasets/raw_videos
+
+Tip: if you don't need the videos, use record_signs.py instead - it saves
+landmarks directly and is much faster.
+"""
+
+import argparse
+import time
 from datetime import datetime
 
-# =====================================================
-# CONFIGURATION
-# =====================================================
+import cv2
 
-# Sign class you want to record
-SIGN_NAME = "hello"
+from core.config import RAW_VIDEO_DIR
 
-# Number of videos to collect
-NUM_VIDEOS = 100
 
-# Duration of each video (seconds)
-VIDEO_DURATION = 3
+def overlay(frame, lines, color=(0, 255, 0)):
+    for i, text in enumerate(lines):
+        cv2.putText(frame, text, (20, 40 + 35 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
-# Webcam FPS
-FPS = 20
 
-# =====================================================
-# CREATE FOLDER
-# =====================================================
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sign", required=True)
+    ap.add_argument("--num", type=int, default=40)
+    ap.add_argument("--seconds", type=float, default=2.5)
+    ap.add_argument("--fps", type=int, default=20)
+    ap.add_argument("--camera", type=int, default=0)
+    args = ap.parse_args()
 
-save_dir = f"datasets/raw_videos/{SIGN_NAME}"
-os.makedirs(save_dir, exist_ok=True)
+    save_dir = RAW_VIDEO_DIR / args.sign
+    save_dir.mkdir(parents=True, exist_ok=True)
+    done = len(list(save_dir.glob("*.avi")))
 
-# =====================================================
-# OPEN WEBCAM
-# =====================================================
+    cap = cv2.VideoCapture(args.camera)
+    if not cap.isOpened():
+        raise SystemExit("Webcam not found")
+    size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
-cap = cv2.VideoCapture(0)
-
-if not cap.isOpened():
-    print("Error: Webcam not found")
-    exit()
-
-print(f"\nCollecting data for sign: {SIGN_NAME}")
-print(f"Target videos: {NUM_VIDEOS}")
-
-video_count = 0
-
-while video_count < NUM_VIDEOS:
-
-    print(f"\nPress 'R' to record video {video_count+1}")
-    print("Press 'Q' to quit")
-
-    while True:
-
-        ret, frame = cap.read()
-
-        if not ret:
+    while done < args.num:
+        ok, frame = cap.read()
+        if not ok:
             break
-
-        display_frame = frame.copy()
-
-        cv2.putText(
-            display_frame,
-            f"Sign: {SIGN_NAME}",
-            (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0,255,0),
-            2
-        )
-
-        cv2.putText(
-            display_frame,
-            f"Recorded: {video_count}/{NUM_VIDEOS}",
-            (20, 80),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (255,0,0),
-            2
-        )
-
-        cv2.imshow("Data Collection", display_frame)
-
-        key = cv2.waitKey(1)
-
-        # Start recording
-        if key == ord('r'):
+        show = cv2.flip(frame, 1)
+        overlay(show, [f"Sign: {args.sign}", f"Recorded: {done}/{args.num}", "R = record   Q = quit"])
+        cv2.imshow("Data Collection", show)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
             break
+        if key != ord("r"):
+            continue
 
-        # Quit
-        if key == ord('q'):
-            cap.release()
-            cv2.destroyAllWindows()
-            exit()
+        t0 = time.time()
+        while time.time() - t0 < 1.0:  # countdown so the clip starts from a neutral pose
+            ok, frame = cap.read()
+            show = cv2.flip(frame, 1)
+            overlay(show, [f"Get ready... {1 - (time.time() - t0):.1f}"], (0, 200, 255))
+            cv2.imshow("Data Collection", show)
+            cv2.waitKey(1)
 
-    # =================================================
-    # CREATE VIDEO FILE
-    # =================================================
+        path = save_dir / f"{args.sign}_{datetime.now():%Y%m%d_%H%M%S_%f}.avi"
+        out = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"XVID"), args.fps, size)
+        for _ in range(int(args.seconds * args.fps)):
+            ok, frame = cap.read()
+            if not ok:
+                break
+            out.write(frame)  # saved un-mirrored, same as training videos
+            show = cv2.flip(frame, 1)
+            overlay(show, ["RECORDING"], (0, 0, 255))
+            cv2.imshow("Data Collection", show)
+            cv2.waitKey(1)
+        out.release()
+        done += 1
+        print("saved", path)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cap.release()
+    cv2.destroyAllWindows()
 
-    video_path = os.path.join(
-        save_dir,
-        f"{SIGN_NAME}_{timestamp}.avi"
-    )
 
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-
-    out = cv2.VideoWriter(
-        video_path,
-        fourcc,
-        FPS,
-        (
-            int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        )
-    )
-
-    print("Recording...")
-
-    total_frames = VIDEO_DURATION * FPS
-
-    frame_counter = 0
-
-    while frame_counter < total_frames:
-
-        ret, frame = cap.read()
-
-        if not ret:
-            break
-
-        out.write(frame)
-
-        display_frame = frame.copy()
-
-        cv2.putText(
-            display_frame,
-            "RECORDING",
-            (20,40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0,0,255),
-            3
-        )
-
-        cv2.imshow("Data Collection", display_frame)
-
-        cv2.waitKey(1)
-
-        frame_counter += 1
-
-    out.release()
-
-    video_count += 1
-
-    print(f"Saved: {video_path}")
-
-cap.release()
-cv2.destroyAllWindows()
-
-print("\nData Collection Completed")
+if __name__ == "__main__":
+    main()

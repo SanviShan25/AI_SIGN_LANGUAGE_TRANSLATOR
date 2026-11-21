@@ -1,32 +1,18 @@
-# Python
 __pycache__/
-*.pyc
-*.pyo
-
-# Virtual Environment
+*.py[cod]
 venv/
+.venv/
 env/
-
-# Mac
 .DS_Store
-
-# Jupyter
 .ipynb_checkpoints/
-
-# Models
-*.h5
-*.pt
-*.pth
-*.ckpt
-
-# Logs
 *.log
-
-# Streamlit
 .streamlit/secrets.toml
+.env
 
+# data & artifacts (too big for git)
 datasets/
-venv/
-.DS_Store
-__pycache__/
-*.pyc
+models/*.pt
+models/mediapipe/
+reports/*.png
+reports/split.json
+*.crdownload
