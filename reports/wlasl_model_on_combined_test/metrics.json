@@ -1,0 +1,23 @@
+{
+  "test_samples": 948,
+  "top1_accuracy": 0.6518987341772152,
+  "top5_accuracy": 0.8343881856540084,
+  "macro_f1": 0.6378390946728786,
+  "num_classes": 50,
+  "best_val_acc": 0.8152173913043478,
+  "model": "/Users/sanvishan/Desktop/AI Sign Language Translator/AI_SIGN_LANGUAGE_TRANSLATOR/models/sign_transformer.pt",
+  "by_source": {
+    "ASL Citizen": {
+      "test_samples": 855,
+      "top1_accuracy": 0.6573099415204678,
+      "top5_accuracy": 0.8304093567251462,
+      "macro_f1": 0.6378665275036769
+    },
+    "WLASL": {
+      "test_samples": 93,
+      "top1_accuracy": 0.6021505376344086,
+      "top5_accuracy": 0.8709677419354839,
+      "macro_f1": 0.5467619047619048
+    }
+  }
+}
