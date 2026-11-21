@@ -1,6 +1,7 @@
 """Streamlit dashboard.
 
     streamlit run dashboard/app.py
+    SIGN_MODEL_PATH=models/combined.pt streamlit run dashboard/app.py   # other checkpoint
 
 Tabs: Live webcam (needs streamlit-webrtc) | Upload video | Gloss -> sentence | Model report
 """
@@ -16,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
-from core.config import CFG, CHECKPOINT_PATH, REPORTS_DIR
+from core.config import CFG, REPORTS_DIR, model_path
 from llm_layer.grammar_correction import _pick_provider, gloss_to_sentence
 from speech.text_to_speech import synthesize_mp3
 
@@ -26,7 +27,7 @@ st.set_page_config(page_title="AI Sign Language Translator", page_icon="🤟", l
 @st.cache_resource
 def load_predictor():
     from core.model import Predictor
-    return Predictor(CHECKPOINT_PATH)
+    return Predictor(model_path())
 
 
 def new_extractor():
@@ -49,6 +50,7 @@ predictor = None
 try:
     predictor = load_predictor()
     st.sidebar.success(f"Model loaded: {len(predictor.classes)} signs")
+    st.sidebar.caption(f"checkpoint: {model_path().name}")
     if predictor.metrics.get("val_acc") is not None:
         st.sidebar.metric("Validation accuracy", f"{predictor.metrics['val_acc']:.1%}")
     with st.sidebar.expander("Known signs"):

@@ -1,6 +1,7 @@
 """REST API (for a mobile app, website or another service).
 
     uvicorn api.server:app --host 0.0.0.0 --port 8000
+    SIGN_MODEL_PATH=models/combined.pt uvicorn api.server:app --port 8000   # other checkpoint
     open http://localhost:8000/docs
 
 Endpoints
@@ -23,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from core.config import CHECKPOINT_PATH, RAW_DIM
+from core.config import RAW_DIM, model_path
 from core.pipeline import translate_landmarks, translate_video
 from llm_layer.grammar_correction import gloss_to_sentence
 from speech.text_to_speech import synthesize_mp3
@@ -42,7 +43,7 @@ def predictor():
     if _predictor is None:
         from core.model import Predictor
         try:
-            _predictor = Predictor(CHECKPOINT_PATH)
+            _predictor = Predictor(model_path())
         except FileNotFoundError as e:
             raise HTTPException(503, str(e))
     return _predictor
@@ -72,7 +73,7 @@ class SpeechRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_ready": CHECKPOINT_PATH.exists()}
+    return {"status": "ok", "model_ready": model_path().exists(), "model_path": str(model_path())}
 
 
 @app.get("/classes")

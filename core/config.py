@@ -1,6 +1,7 @@
 """Central configuration. Every script reads paths and hyper-parameters from here,
 so training and inference can never silently disagree."""
 
+import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -9,11 +10,24 @@ ROOT = Path(__file__).resolve().parent.parent
 DATASETS_DIR = ROOT / "datasets"
 RAW_VIDEO_DIR = DATASETS_DIR / "raw_videos"          # your own webcam recordings
 WLASL_DIR = DATASETS_DIR / "WLASL" / "dataset" / "SL"  # WLASL videos: <class>/<id>.mp4
-LANDMARK_DIR = DATASETS_DIR / "landmarks"            # extracted (T, RAW_DIM) .npy files
+LANDMARK_DIR = DATASETS_DIR / "landmarks"            # extracted (T, RAW_DIM) .npy files (WLASL)
+OWN_LANDMARK_DIR = DATASETS_DIR / "own_landmarks"    # your own webcam recordings (record_signs)
 
 MODELS_DIR = ROOT / "models"
 MEDIAPIPE_DIR = MODELS_DIR / "mediapipe"
 CHECKPOINT_PATH = MODELS_DIR / "sign_transformer.pt"
+MODEL_PATH_ENV = "SIGN_MODEL_PATH"
+
+
+def model_path() -> Path:
+    """Checkpoint used by the dashboard and the API: $SIGN_MODEL_PATH if set
+    (relative paths are taken from the project root), else CHECKPOINT_PATH."""
+    value = os.getenv(MODEL_PATH_ENV, "").strip()
+    if not value:
+        return CHECKPOINT_PATH
+    p = Path(value).expanduser()
+    return p if p.is_absolute() else ROOT / p
+
 REPORTS_DIR = ROOT / "reports"
 
 # ---------------------------------------------------------------------------

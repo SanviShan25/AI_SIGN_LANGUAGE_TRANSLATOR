@@ -3,7 +3,9 @@
     python -m data_collection.record_signs --signs hello thanks yes no please --per-sign 30
 
 Keys: SPACE = record one clip, N = next sign, Q = quit.
-Each clip is saved to datasets/landmarks/<sign>/<timestamp>.npy, ready for training.
+Each clip is saved to datasets/own_landmarks/<sign>/<timestamp>.npy (change with --out),
+kept apart from the WLASL landmarks so the benchmark stays clean. Train on both with
+    python -m training.train_transformer --data datasets/landmarks datasets/own_landmarks
 Record with different lighting, distance, clothes and both hands for best results.
 """
 
@@ -14,7 +16,9 @@ from datetime import datetime
 import cv2
 import numpy as np
 
-from core.config import LANDMARK_DIR
+from pathlib import Path
+
+from core.config import OWN_LANDMARK_DIR
 from core.landmarks import LandmarkExtractor, draw_landmarks
 from core.preprocessing import hands_present
 
@@ -25,6 +29,7 @@ def main():
     ap.add_argument("--per-sign", type=int, default=30)
     ap.add_argument("--seconds", type=float, default=2.0)
     ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--out", type=Path, default=OWN_LANDMARK_DIR, help="root folder for <sign>/*.npy")
     args = ap.parse_args()
 
     cap = cv2.VideoCapture(args.camera)
@@ -33,7 +38,7 @@ def main():
 
     with LandmarkExtractor() as ex:
         for sign in args.signs:
-            folder = LANDMARK_DIR / sign
+            folder = args.out / sign
             folder.mkdir(parents=True, exist_ok=True)
             count = len(list(folder.glob("*.npy")))
             skip = False

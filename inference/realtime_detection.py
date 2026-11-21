@@ -7,11 +7,12 @@ Keys: Q = quit, C = clear.
 """
 
 import argparse
+from pathlib import Path
 import time
 
 import cv2
 
-from core.config import CFG
+from core.config import CFG, CHECKPOINT_PATH
 from core.landmarks import LandmarkExtractor, draw_landmarks
 from core.model import Predictor
 from core.recognizer import StreamingRecognizer
@@ -25,11 +26,13 @@ def put(frame, text, y, color=(255, 255, 255), scale=0.8):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--model", type=Path, default=CHECKPOINT_PATH,
+                    help="checkpoint to load, e.g. models/combined.pt")
     ap.add_argument("--threshold", type=float, default=CFG.inference.confidence_threshold)
     args = ap.parse_args()
     CFG.inference.confidence_threshold = args.threshold
 
-    predictor = Predictor()
+    predictor = Predictor(args.model)
     rec = StreamingRecognizer(predictor.predict, CFG.inference)
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():

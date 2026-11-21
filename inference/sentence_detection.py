@@ -9,11 +9,12 @@ Keys: ENTER = finish sentence, BACKSPACE = delete last word, C = clear, Q = quit
 """
 
 import argparse
+from pathlib import Path
 import threading
 
 import cv2
 
-from core.config import CFG
+from core.config import CFG, CHECKPOINT_PATH
 from core.landmarks import LandmarkExtractor, draw_landmarks
 from core.model import Predictor
 from core.recognizer import StreamingRecognizer
@@ -25,10 +26,12 @@ from speech.text_to_speech import speak
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--model", type=Path, default=CHECKPOINT_PATH,
+                    help="checkpoint to load, e.g. models/combined.pt")
     ap.add_argument("--no-speech", action="store_true")
     args = ap.parse_args()
 
-    predictor = Predictor()
+    predictor = Predictor(args.model)
     rec = StreamingRecognizer(predictor.predict, CFG.inference)
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():
