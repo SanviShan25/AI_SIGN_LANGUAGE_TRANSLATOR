@@ -54,21 +54,29 @@ make smoke                           # whole train → eval pipeline on syntheti
 
 ### 1. Get data (pick one or both)
 
-**A. WLASL** — put videos as `datasets/WLASL/dataset/SL/<word>/<id>.mp4`, then:
+**A. WLASL** — put videos as `datasets/WLASL/dataset/SL/<word>/<id>.mp4`
+(from the Kaggle "WLASL processed" download this is done with symlinks, no copy), then:
 ```bash
-python -m data_collection.extract_landmarks --max-classes 50 --workers 4
+python -m scripts.prepare_wlasl --src ~/.cache/kagglehub/datasets/risangbaskoro/wlasl-processed/versions/5
+python -m data_collection.extract_landmarks --max-classes 50 --workers 4   # → datasets/landmarks/
 ```
 
 **B. Your own signs** (fastest, best for a live demo):
 ```bash
 python -m data_collection.record_signs --signs hello thanks yes no please sorry help --per-sign 30
 ```
+Clips go to `datasets/own_landmarks/<sign>/` (separate from WLASL, so the benchmark stays clean).
 Record with different lighting, distance, clothes and both hands. 30+ clips per sign.
 
 ### 2. Train and evaluate
 ```bash
-python -m training.train_transformer
+python -m training.train_transformer   # WLASL only → models/sign_transformer.pt
 python -m training.evaluate          # → reports/metrics.json, confusion_matrix.png, ...
+
+# combined model (WLASL + your own recordings) for the live demo
+python -m training.train_transformer --data datasets/landmarks datasets/own_landmarks \
+    --out models/combined.pt --reports reports/combined
+python -m training.evaluate --model models/combined.pt --reports reports/combined
 ```
 
 ### 3. Run it
@@ -78,6 +86,14 @@ python -m inference.sentence_detection      # words → sentence → speech
 streamlit run dashboard/app.py              # web dashboard
 uvicorn api.server:app --port 8000          # REST API → http://localhost:8000/docs
 ```
+All of these load `models/sign_transformer.pt` by default. To use another checkpoint:
+```bash
+python -m inference.realtime_detection --model models/combined.pt
+python -m inference.sentence_detection --model models/combined.pt
+SIGN_MODEL_PATH=models/combined.pt streamlit run dashboard/app.py
+SIGN_MODEL_PATH=models/combined.pt uvicorn api.server:app --port 8000
+```
+(`SIGN_MODEL_PATH` may be absolute or relative to the project root.)
 
 **How to sign for the live app:** sign a word, drop your hands out of view for a moment, sign the next word. Keep hands down ~1.5 s (or press ENTER) to finish the sentence.
 
@@ -105,12 +121,24 @@ docker run -p 8000:8000 -v $PWD/models:/app/models sign-translator
 
 ## Results
 
-Fill this in after `python -m training.evaluate`:
+Numbers from `python -m training.evaluate` on the held-out test split (never trained on).
 
-| Dataset | Classes | Test top-1 | Test top-5 | Macro F1 |
+**WLASL only** (benchmark: no own recordings mixed in)
+
+| Dataset | Classes | Clips (train/val/test) | Test top-1 | Test top-5 | Macro F1 |
+|---|---|---|---|---|---|
+| WLASL, 50 classes with most videos | 50 | 614 (429/92/93) | 60.2 % | 87.1 % | 0.547 |
+
+Default config (d_model 192, 4 layers, 1.3 M params), best val acc 81.5 % (epoch 100).
+Only ~2 test clips per class, so expect a few points of noise.
+
+**Combined model** (WLASL + own recordings, for the live webcam demo; not comparable to the benchmark)
+Trained with the combined commands in section 2 (results in `reports/combined/`).
+Class folders with the same name in both roots are merged into one class.
+
+| Data | Classes | Test top-1 | Test top-5 | Macro F1 |
 |---|---|---|---|---|
-| own recordings | – | – | – | – |
-| WLASL-100 | 100 | – | – | – |
+| – | – | – | – | – |
 
 ## Limitations / roadmap
 - Isolated-sign classifier + segmentation, not true continuous sign language recognition (CSLR, e.g. CTC on How2Sign / PHOENIX).
