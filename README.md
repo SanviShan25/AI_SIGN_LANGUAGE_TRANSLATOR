@@ -1,4 +1,4 @@
-# 🤟 AI Sign Language Translator
+#  AI Sign Language Translator
 
 Real-time **sign language → English text → speech**, from a normal webcam.
 
